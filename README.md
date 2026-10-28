@@ -26,16 +26,3 @@ Engineered with strict adherence to domain financial invariants: double-entry ap
 5. **Idempotency & Replay Safety:** Webhook ingestion layers verify cryptographic signatures and enforce strict `provider_event_id` uniqueness.
 
 ---
-
-## Getting Started
-
-### 1. Prerequisites
-- Node.js v20+ (LTS recommended)
-- `pnpm` (or `npm`)
-- A running Neon PostgreSQL database instance
-
-### 2. Environment Setup
-Copy the example environment configuration:
-
-```bash
-cp .env.example .env

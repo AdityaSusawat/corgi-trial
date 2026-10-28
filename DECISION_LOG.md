@@ -49,3 +49,20 @@ Implemented the zero-dependency insurance math engine in `lib/math/insurance-mat
 
 ### 4. Verification & Testing
 - Verified integer-cent assertions and boundary checks across issuance, endorsement proration, cancellation refunds, and claim limit invariants (`Paid + Reserve <= Limit`).
+
+## [2026-10-29 03:55 IST] Transactional Double-Entry Ledger & Policy Lifecycle Orchestrator
+
+### 1. Context & What Was Done
+Built the core transactional service layer in `lib/services/ledger-service.ts` connecting the TypeORM entities and the deterministic insurance math engine. Implemented policy issuance, mid-term endorsements, backdated endorsement reversal and re-book (The Correction Test), cancellation refunds, claims reserving/payouts, Maker-Checker reviews, As-Of date reconstruction, and monthly broker statements.
+
+### 2. Key Decisions & Technical Rationale
+- **Pessimistic Row-Level Locking (`pessimistic_write`):** Acquired `SELECT ... FOR UPDATE` locks on the parent `Policy` or `Claim` row at the start of every state-changing transaction. This prevents concurrent webhook replays or double-clicks from creating sequence number collisions or bypassing claim coverage limits.
+- **Pre-Commit Double-Entry Balance Assertion:** `postBalancedJournalTransaction` strips zero-cent lines, asserts strictly positive integer cents on every leg, and verifies `Sum(DEBIT) === Sum(CREDIT)` before writing to PostgreSQL.
+- **Compensating Reversal + Re-Book Architecture (Gauntlet #4):** Implemented `executeEndorsementCorrection` to fix backdated endorsement errors without modifying existing records. The reversal event uses the original erroneous `effective_date` with negated deltas so historical pro-rata slices cancel out cleanly, while the re-booked event prices over the corrected window.
+- **Pre-Cancellation Earned Premium Recognition:** Before clearing `LIABILITY:UNEARNED_PREMIUM_RESERVE` on mid-term cancellation, the service calculates and books any unrecognized earned premium up to `cancellationEffectiveDate`, ensuring the unearned liability clears to $0.00.
+
+### 3. Assumptions & Trade-offs
+- **Maker-Checker Routing:** All claim payouts and high-delta endorsements (>= $2,500) automatically pause and write to `approval_requests`, enforcing that initiator can NEVER approve their own action and autonomous MCP agents or Makers cannot approve.
+
+### 4. Verification & Testing
+- Verified TypeScript compilation and entity relation mappings across all 9 service workflows.
