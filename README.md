@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Corgi Insurance — Policy Administration Platform
+
+A production-grade, US commercial lines policy administration system built for the **Corgi Insurance Work Trial (Track 1: Policy Administration)**.
+
+Engineered with strict adherence to domain financial invariants: double-entry append-only accounting, zero-`UPDATE`/`DELETE` triggers on financial tables, integer-cent arithmetic, and bi-temporal policy state reconstruction.
+
+---
+
+## Architecture & Tech Stack
+
+- **Framework:** [Next.js](https://nextjs.org/) (App Router, Server Components & Dynamic Route Handlers)
+- **Language:** TypeScript (strict mode, ES2022 target)
+- **Database:** PostgreSQL via [Neon](https://neon.tech/) Serverless (with custom UTC session & driver BigInt parsers)
+- **ORM / Data Layer:** [TypeORM](https://typeorm.io/) with custom database immutability triggers
+- **Styling:** [Tailwind CSS](https://tailwindcss.com/)
+- **External Integrations:** Stripe (payments, identity, cancellations), Plaid (bank account verification)
+
+---
+
+## Core Financial & Domain Principles
+
+1. **Strict Immutability:** No `UPDATE` or `DELETE` statements on financial or policy event records. Database-level PostgreSQL triggers (`prevent_financial_mutation`) actively reject mutation attempts. Corrections are recorded as compensating reversals and re-books.
+2. **Deterministic Integer Math:** All monetary figures are stored and processed in integer USD cents (`BIGINT`). Pro-rata allocations use Banker's Rounding (Round-Half-to-Even) via exact integer remainder math, with sub-cent rounding residuals tracked explicitly.
+3. **Leap-Year-Aware Daily Proration:** Policy anniversary terms calculate exact elapsed calendar days (365 vs. 366 days over leap days) without hardcoded denominators.
+4. **State Tax & Statutory Fee Separation:** Data-driven, effective-dated tax and fee schedules (e.g., California SLA rate adjustments, NY, TX) calculate alongside premiums but never pollute earned premium math or broker commission.
+5. **Idempotency & Replay Safety:** Webhook ingestion layers verify cryptographic signatures and enforce strict `provider_event_id` uniqueness.
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### 1. Prerequisites
+- Node.js v20+ (LTS recommended)
+- `pnpm` (or `npm`)
+- A running Neon PostgreSQL database instance
+
+### 2. Environment Setup
+Copy the example environment configuration:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+cp .env.example .env

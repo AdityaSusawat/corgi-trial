@@ -32,3 +32,20 @@ Configured TypeORM connection to Neon Serverless PostgreSQL in `lib/db/data-sour
 
 ### 4. Verification & Testing
 - Health check view built in `app/page.tsx` querying table counts directly against Neon PostgreSQL.
+
+## [2026-10-29 02:35 IST] Core Insurance Math Engine & Domain Gauntlet Decisions
+
+### 1. Context & What Was Done
+Implemented the zero-dependency insurance math engine in `lib/math/insurance-math.ts` covering anniversary leap-year day counting, daily pro-rata earned vs. unearned calculations, mid-term endorsement proration, state tax/fee schedules, cancellation refunds, and claims reserve limit checks.
+
+### 2. Key Decisions & Technical Rationale
+- **Rounding Penny & Banker's Rounding (Gauntlet #10):** Implemented deterministic Round-Half-to-Even (`divideAndRoundHalfToEven`) using exact `BigInt` remainder arithmetic (`2 * remainder === denominator`) rather than floating-point division. To prevent 1-cent zombie liabilities in `LIABILITY:UNEARNED_PREMIUM_RESERVE`, unearned premium is bounded as the exact complement (`Written - Earned`), with any multi-slice rounding residual explicitly routed to `EXPENSE:ROUNDING_VARIANCE_EXPENSE`.
+- **Commission Earned on Collected Base Premium (Gauntlet #7):** Chose cash-basis commission (earned on collected base premium, excluding state taxes and statutory fees) over written-basis. This eliminates carrier credit risk on unpaid policies and ensures a 1:1 tie-out with monthly broker statements (`gross_premium_collected * commission_rate_bps`).
+- **Dual Cancellation Support — Pro-Rata & Short-Rate (Gauntlet #5):** Implemented both methods in `calculateCancellationRefund`. Pro-rata refunds 100% of unearned base premium; Short-Rate applies a configurable penalty (defaulting to standard ISO 10% / 1000 bps of unearned premium) booked to `REVENUE:SHORT_RATE_PENALTY_REVENUE` and refunds the remaining 90%.
+- **Effective-Dated State Tax & Fee Schedules (Gauntlet #11):** Modeled state surplus lines taxes, stamping fees, and flat policy fees in an effective-dated lookup table (`DEFAULT_STATE_TAX_SCHEDULES` for CA, NY, TX), including California's real-world Jan 1, 2026 SLA stamping fee reduction from 0.25% to 0.18%. On cancellation, state premium tax refunds pro-rata with unearned premium, while stamping fees and carrier policy fees are enforced as non-refundable earned items.
+
+### 3. Assumptions & Trade-offs
+- **Leap Day Anniversary Convention:** For policies written on Feb 29 of a leap year, the 1-year anniversary end date resolves to Feb 28 of the following non-leap year, while any term crossing Feb 29 (e.g., March 1, 2027 to March 1, 2028) computes on a 366-day denominator.
+
+### 4. Verification & Testing
+- Verified integer-cent assertions and boundary checks across issuance, endorsement proration, cancellation refunds, and claim limit invariants (`Paid + Reserve <= Limit`).
