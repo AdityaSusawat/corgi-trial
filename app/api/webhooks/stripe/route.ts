@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     const db = await getDb();
-    const webhookRepo = db.getRepository<WebhookEvent>('WebhookEvent');
+    const webhookRepo = db.getRepository(WebhookEvent);
 
     try {
         // 1. Idempotency Check ("Twice is one")
@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
                     let brokerId = meta.broker_id;
                     if (!brokerId) {
                         const defaultApprovedBroker = await db
-                            .getRepository<Broker>('Broker')
+                            .getRepository(Broker)
                             .findOne({ where: { kyb_status: 'APPROVED' } });
 
                         if (!defaultApprovedBroker) {
@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
                         ? charge.payment_intent
                         : charge.payment_intent?.id ?? null;
 
-                const policyRepo = db.getRepository<Policy>('Policy');
+                const policyRepo = db.getRepository(Policy);
                 const policy = await policyRepo.findOne({
                     where: [
                         ...(paymentIntentId

@@ -39,7 +39,7 @@ export async function POST(
         }
 
         const db = await getDb();
-        const policy = await db.getRepository<Policy>('Policy').findOne({
+        const policy = await db.getRepository(Policy).findOne({
             where: { id: policyId },
         });
 
@@ -57,11 +57,11 @@ export async function POST(
             );
         }
 
-        const broker = await db.getRepository<Broker>('Broker').findOneOrFail({
+        const broker = await db.getRepository(Broker).findOneOrFail({
             where: { id: policy.broker_id },
         });
 
-        const events = await db.getRepository<PolicyEvent>('PolicyEvent').find({
+        const events = await db.getRepository(PolicyEvent).find({
             where: { policy_id: policy.id },
             order: { sequence_number: 'ASC' },
         });

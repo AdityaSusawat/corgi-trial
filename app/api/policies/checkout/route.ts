@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
         } = body;
 
         const db = await getDb();
-        const brokerRepo = db.getRepository<Broker>('Broker');
+        const brokerRepo = db.getRepository(Broker);
 
         const broker = brokerId
             ? await brokerRepo.findOne({ where: { id: brokerId } })
