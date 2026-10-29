@@ -89,10 +89,23 @@ interface Claim {
   policy?: Policy;
 }
 
+interface ApprovalRequest {
+  id: string;
+  action_type: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  amount_cents: number;
+  summary: string;
+  initiated_by_user: string;
+  initiated_by_role: string;
+  created_at: string;
+  claim_id?: string | null;
+}
+
 interface ConsoleState {
   brokers: Broker[];
   policies: Policy[];
   claims: Claim[];
+  approvals: ApprovalRequest[];
   ledger: {
     transactions: LedgerTransaction[];
     trialBalances: TrialBalance[];
@@ -123,6 +136,23 @@ export default function OpsConsole() {
   const [isEndorseOpen, setIsEndorseOpen] = useState(false);
   const [isCancelOpen, setIsCancelOpen] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
+
+  // Claims & Maker-Checker Modals
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
+  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [selectedClaim, setSelectedClaim] = useState<Claim | null>(null);
+
+  // New Claim Form State
+  const [newClaimPolicyId, setNewClaimPolicyId] = useState('');
+  const [newDateOfLoss, setNewDateOfLoss] = useState('2026-06-15');
+  const [newClaimantName, setNewClaimantName] = useState('Pacific Freight LLC');
+  const [newLossDescription, setNewLossDescription] = useState('Forklift mast struck overhead fire suppression line');
+  const [newInitialReserveCents, setNewInitialReserveCents] = useState(1500000); // $15,000
+
+  // Payout Form State
+  const [payoutAmountCents, setPayoutAmountCents] = useState(600000); // $6,000 (Triggers Maker-Checker)
+  const [payoutRail, setPayoutRail] = useState<'ACH_DELAYED' | 'USDC_BASE_SEPOLIA'>('ACH_DELAYED');
+  const [payoutNotes, setPayoutNotes] = useState('First tranche building damage repair');
 
   // Issue Form State
   const [newInsuredName, setNewInsuredName] = useState('Helios Propulsion Inc');
@@ -159,6 +189,11 @@ export default function OpsConsole() {
         );
         setNewBrokerId(approved?.id || json.brokers[0].id);
       }
+
+      if (!newClaimPolicyId && json.policies?.length > 0) {
+    const active = json.policies.find((p: Policy) => p.status === 'BOUND_ACTIVE');
+    setNewClaimPolicyId(active?.id || json.policies[0].id);
+  }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setActionError(`Failed to load system state: ${msg}`);
@@ -279,6 +314,131 @@ export default function OpsConsole() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setActionError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleOpenClaim(e: React.FormEvent) {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch('/api/claims', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          policyId: newClaimPolicyId,
+          dateOfLoss: newDateOfLoss,
+          claimantName: newClaimantName,
+          lossDescription: newLossDescription,
+          initialReserveCents: Number(newInitialReserveCents),
+          createdBy: role,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Claim intake failed');
+
+      setActionSuccess(`Claim ${payload.claim.claim_number} opened with ${formatCents(payload.claim.current_reserve_cents)} reserve posted to ledger.`);
+      setIsClaimModalOpen(false);
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleInitiatePayout(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedClaim) return;
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/claims/${selectedClaim.id}/payout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'INITIATE_PAYOUT',
+          payoutAmountCents: Number(payoutAmountCents),
+          payoutRail,
+          notes: payoutNotes,
+          initiatedByUser: role === 'MAKER_OPS' ? 'ops_maker@corgi.insure' : 'checker_lead@corgi.insure',
+          initiatedByRole: role,
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Payout initiation failed');
+
+      if (payload.status === 'QUEUED_FOR_CHECKER_APPROVAL') {
+        setActionSuccess(`Payout of ${formatCents(payoutAmountCents)} submitted and queued for Lead Checker sign-off.`);
+      } else {
+        setActionSuccess(`Payout of ${formatCents(payoutAmountCents)} settled on ${payload.claim.claim_number}.`);
+      }
+      setIsPayoutModalOpen(false);
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleReviewApproval(approvalId: string, decision: 'APPROVED' | 'REJECTED') {
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/approvals/${approvalId}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision,
+          reviewedByUser: role === 'CHECKER_LEAD' ? 'lead_checker@corgi.insure' : 'ops_maker@corgi.insure',
+          reviewedByRole: role,
+          reviewNotes: decision === 'APPROVED' ? 'Approved by Underwriting Lead' : 'Rejected due to documentation deficit',
+        }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Review submission failed');
+
+      setActionSuccess(`Request ${approvalId.slice(0, 8)} marked as ${decision}.`);
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleSimulateReturn(claimId: string) {
+    if (!confirm('Simulate ACH Return (R01 Insufficient Funds)? This will reverse settled cash and restore the claim reserve.')) return;
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/claims/${claimId}/simulate-return`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnCode: 'R01_INSUFFICIENT_FUNDS' }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Return simulation failed');
+
+      setActionSuccess(`ACH Return (R01) processed on ${payload.claim.claim_number}. Reserve restored to ${formatCents(payload.claim.current_reserve_cents)}.`);
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -712,21 +872,65 @@ export default function OpsConsole() {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-[#111111]">
-                  Claims Reserving & Payout Rail
+                  Claims Reserving & Maker-Checker Payout Rail
                 </h1>
                 <p className="text-sm text-gray-500">
-                  Loss reserves, statutory solvency checks, and maker-checker payment controls.
+                  Loss reserves, statutory solvency checks, and maker-checker approval controls.
                 </p>
               </div>
               <button
-                onClick={() =>
-                  alert('Claims Intake Modal (*) scheduled for Phase 4.')
-                }
-                className="bg-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-md hover:bg-gray-300"
+                onClick={() => setIsClaimModalOpen(true)}
+                className="bg-[#FF7D32] hover:bg-[#e66c28] text-white text-sm font-semibold px-4 py-2 rounded-md shadow-sm transition-colors"
               >
-                + Open New Claim *
+                + Open New Claim
               </button>
             </div>
+
+            {/* Maker-Checker Approval Queue */}
+            {data?.approvals && data.approvals.filter(a => a.status === 'PENDING').length > 0 && (
+              <div className="mb-6 bg-amber-50 border border-amber-300 rounded-md p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse"></span>
+                    <h2 className="text-sm font-bold text-amber-950 uppercase tracking-wide">
+                      Pending Maker-Checker Approvals Queue ({data.approvals.filter(a => a.status === 'PENDING').length})
+                    </h2>
+                  </div>
+                  <span className="text-xs text-amber-800">
+                    Current Active Role: <strong>{role === 'CHECKER_LEAD' ? 'Lead Checker (Authorized)' : 'Underwriting Maker (Cannot Self-Approve)'}</strong>
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {data.approvals.filter(a => a.status === 'PENDING').map((req) => (
+                    <div key={req.id} className="bg-white border border-amber-200 rounded p-3 flex justify-between items-center text-sm">
+                      <div>
+                        <div className="font-semibold text-gray-900">{req.summary}</div>
+                        <div className="text-xs text-gray-500 font-mono">
+                          Initiated by: {req.initiated_by_user} ({req.initiated_by_role}) | Amount: {formatCents(req.amount_cents)}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleReviewApproval(req.id, 'APPROVED')}
+                          disabled={isSubmitting}
+                          className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded disabled:opacity-50"
+                        >
+                          Approve Payout
+                        </button>
+                        <button
+                          onClick={() => handleReviewApproval(req.id, 'REJECTED')}
+                          disabled={isSubmitting}
+                          className="px-3 py-1 bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
               <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
@@ -738,7 +942,7 @@ export default function OpsConsole() {
                     <th className="py-3 px-4">Current Reserve</th>
                     <th className="py-3 px-4">Total Paid</th>
                     <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Payout Rail</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -746,18 +950,17 @@ export default function OpsConsole() {
                     <tr key={clm.id} className="hover:bg-gray-50">
                       <td className="py-3 px-4 font-mono font-medium text-[#111111]">
                         {clm.claim_number}
+                        {clm.policy && (
+                          <div className="text-xs text-gray-400 font-sans">
+                            {clm.policy.policy_number}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-medium text-[#111111]">
-                          {clm.claimant_name}
-                        </div>
-                        <div className="text-xs text-gray-500 line-clamp-1">
-                          {clm.loss_description}
-                        </div>
+                        <div className="font-medium text-[#111111]">{clm.claimant_name}</div>
+                        <div className="text-xs text-gray-500 line-clamp-1">{clm.loss_description}</div>
                       </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        {clm.date_of_loss}
-                      </td>
+                      <td className="py-3 px-4 font-mono text-xs">{clm.date_of_loss}</td>
                       <td className="py-3 px-4 font-mono font-semibold text-amber-700">
                         {formatCents(clm.current_reserve_cents)}
                       </td>
@@ -765,21 +968,37 @@ export default function OpsConsole() {
                         {formatCents(clm.total_paid_cents)}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="inline-block px-2 py-0.5 text-xs font-semibold rounded bg-amber-50 text-amber-800 border border-amber-200">
+                        <span className={`inline-block px-2 py-0.5 text-xs font-semibold rounded ${
+                          clm.status === 'CLOSED_PAID'
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : clm.status === 'PENDING_APPROVAL'
+                            ? 'bg-purple-50 text-purple-800 border border-purple-200'
+                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                        }`}>
                           {clm.status}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() =>
-                            alert(
-                              'Payout settlement rail (*) requires Maker-Checker review for amounts over $5,000.00.'
-                            )
-                          }
-                          className="text-xs text-[#FF7D32] border border-[#FF7D32] px-2.5 py-1 rounded hover:bg-orange-50 font-medium"
-                        >
-                          Initiate Payout *
-                        </button>
+                      <td className="py-3 px-4 text-right space-x-2">
+                        {clm.status !== 'CLOSED_PAID' && clm.status !== 'PENDING_APPROVAL' && (
+                          <button
+                            onClick={() => {
+                              setSelectedClaim(clm);
+                              setIsPayoutModalOpen(true);
+                            }}
+                            className="text-xs text-[#FF7D32] border border-[#FF7D32] px-2.5 py-1 rounded hover:bg-orange-50 font-medium"
+                          >
+                            Initiate Payout
+                          </button>
+                        )}
+                        {clm.total_paid_cents > 0 && (
+                          <button
+                            onClick={() => handleSimulateReturn(clm.id)}
+                            className="text-xs text-rose-700 border border-rose-300 bg-rose-50 px-2 py-1 rounded hover:bg-rose-100 font-medium"
+                            title="Simulate ACH R01 return bounce"
+                          >
+                            Simulate R01 Bounce
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1076,6 +1295,196 @@ export default function OpsConsole() {
                   className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-sm font-semibold rounded disabled:opacity-50"
                 >
                   {isSubmitting ? 'Executing Refund...' : 'Confirm Cancellation'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: OPEN CLAIM */}
+      {isClaimModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 border border-gray-200">
+            <h2 className="text-lg font-bold text-[#111111] mb-1">
+              Open Claim & Establish Loss Reserve
+            </h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Verifies date of loss against policy terms and posts initial balanced loss reserve to the double-entry ledger.
+            </p>
+
+            <form onSubmit={handleOpenClaim} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Target Policy
+                </label>
+                <select
+                  value={newClaimPolicyId}
+                  onChange={(e) => setNewClaimPolicyId(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                >
+                  {data?.policies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.policy_number} - {p.insured_name} ({p.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Date of Loss
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newDateOfLoss}
+                    onChange={(e) => setNewDateOfLoss(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Initial Loss Reserve (Cents)
+                  </label>
+                  <input
+                    type="number"
+                    step="10000"
+                    required
+                    value={newInitialReserveCents}
+                    onChange={(e) => setNewInitialReserveCents(Number(e.target.value))}
+                    className="w-full text-sm font-mono border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                  />
+                  <span className="text-xs text-gray-400">
+                    {formatCents(newInitialReserveCents)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Claimant Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newClaimantName}
+                  onChange={(e) => setNewClaimantName(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Incident / Loss Description
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  value={newLossDescription}
+                  onChange={(e) => setNewLossDescription(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setIsClaimModalOpen(false)}
+                  className="px-4 py-2 border border-gray-200 text-sm font-medium rounded hover:bg-gray-50 text-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-[#FF7D32] hover:bg-[#e66c28] text-white text-sm font-semibold rounded disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Opening Claim...' : 'Open Claim & Post Reserve'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: INITIATE PAYOUT */}
+      {isPayoutModalOpen && selectedClaim && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 border border-gray-200">
+            <h2 className="text-lg font-bold text-[#111111] mb-1">
+              Disburse Claim Payout: {selectedClaim.claim_number}
+            </h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Draws down loss reserve and releases settled funds. Payouts require dual Maker-Checker review.
+            </p>
+
+            <form onSubmit={handleInitiatePayout} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Payout Amount (Cents)
+                </label>
+                <input
+                  type="number"
+                  step="1000"
+                  required
+                  value={payoutAmountCents}
+                  onChange={(e) => setPayoutAmountCents(Number(e.target.value))}
+                  className="w-full text-sm font-mono border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                />
+                <div className="flex justify-between text-xs mt-1">
+                  <span className="font-semibold text-gray-900">{formatCents(payoutAmountCents)}</span>
+                  <span className="text-gray-400">Available Reserve: {formatCents(selectedClaim.current_reserve_cents)}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Payout Settlement Rail
+                </label>
+                <select
+                  value={payoutRail}
+                  onChange={(e) => setPayoutRail(e.target.value as 'ACH_DELAYED' | 'USDC_BASE_SEPOLIA')}
+                  className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                >
+                  <option value="ACH_DELAYED">ACH Direct Deposit (1 to 3 Business Days)</option>
+                  <option value="USDC_BASE_SEPOLIA">Base Sepolia Testnet USDC (Instant Crypto Settlement)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Payment Disbursement Notes
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={payoutNotes}
+                  onChange={(e) => setPayoutNotes(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:border-[#FF7D32] outline-none"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900">
+                Maker-Checker Notice: Submitting will queue this payout into the approval queue. Only a Lead Checker can finalize the ledger write.
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setIsPayoutModalOpen(false)}
+                  className="px-4 py-2 border border-gray-200 text-sm font-medium rounded hover:bg-gray-50 text-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-[#111111] hover:bg-black text-white text-sm font-semibold rounded disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Submitting...' : 'Submit for Checker Review'}
                 </button>
               </div>
             </form>

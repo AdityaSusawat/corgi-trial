@@ -107,3 +107,26 @@ Built the Operator Console workbench in `app/components/OpsConsole.tsx` and conn
 - **Test 2 (Cancellation):** Cancelled `CORGI-CGL-2026-0001` pro-rata; verified earned premium recognition ($7,989.04), customer refund ($4,131.29), and broker commission clawback ($401.10) tie out to the exact cent.
 - **Test 3 (KYB Gate):** Attempted issuance under unapproved broker `Vanguard Mutual Agents Corp`; verified the underwriting gate hard-aborted with `BROKER_KYB_GATE_BLOCKED`.
 - Table and audit log views verified across all four tabs (`Policies`, `Double-Entry Ledger`, `Broker KYB`, `Claims & Reserves`).
+
+## [2026-10-30 03:30 IST] Claims Reserving, Maker-Checker Controls & ACH Return Simulation
+
+### 1. Context & What Was Done
+Implemented the Claims Intake, Reserving, Dual-Control Payout, and Asynchronous Return workflows across `app/api/claims/route.ts`, `app/api/claims/[id]/payout/route.ts`, `app/api/approvals/[id]/review/route.ts`, `app/api/claims/[id]/simulate-return/route.ts`, and integrated the full lifecycle into `app/components/OpsConsole.tsx`.
+
+### 2. Key Decisions & Technical Rationale
+- **Statutory Solvency Invariant Enforcement:** Verified on intake and adjustment that `Total Incurred = Paid + Reserve <= Policy Coverage Limit`. Verified `dateOfLoss` strictly falls within the active policy term dates (`effective_start_date` to `effective_end_date`).
+- **Maker-Checker Segregation of Duties (Non-Negotiable #6):** 
+  - All claim payout disbursements originate in the `approval_requests` queue with `status: 'PENDING'` and `action_type: 'CLAIM_PAYOUT'`.
+  - Enforced strict backend SoD check: `reviewed_by_user !== initiated_by_user` and `reviewed_by_role === 'CHECKER_LEAD'`. Self-approval attempts by `MAKER_OPS` are hard-rejected.
+- **Atomic Two-Leg Payout Accounting:** Upon Lead Checker approval, the payout draws down the loss reserve directly (`DR LIABILITY:CLAIM_LOSS_RESERVE` / `CR ASSET:OPERATING_CASH_SETTLED`), avoiding double-counting previously expensed incurred losses.
+- **Asynchronous Banking Return Rail (R01 Insufficient Funds):** Built `recordClaimPayoutReturn` to simulate delayed ACH bounce messages. Appends an immutable `PAYOUT_RETURNED` event, credits back `CLAIM_LOSS_RESERVE`, debits `OPERATING_CASH_SETTLED`, and restores claim status to `OPEN` with zero mutating updates on historical rows.
+
+### 3. Assumptions & Trade-offs
+- **Simulated External Banking Rail:** Real commercial claim payouts disburse over NACHA/FedACH or wire transfers rather than credit cards. We track transfer identifiers (`external_payout_id`) and simulate delayed returns rather than attempting mock card credits, accurately representing commercial liability claims infrastructure.
+
+### 4. Verification & Testing
+- **Test 1 (Intake):** Successfully opened `CLM-2026-0002` on `CORGI-CGL-2026-0003` with a $12,000.00 initial loss reserve; verified balanced journal entry (`DR CLAIMS_INCURRED_EXPENSE` / `CR CLAIM_LOSS_RESERVE`).
+- **Test 2 (Dual Approval):** Initiated $6,000.00 payout as Underwriting Maker; verified it moved to `PENDING_APPROVAL`. Switched to Lead Checker and approved; verified cash drawdown ($6,000.00) and reserve decrease.
+- **Test 3 (ACH Return):** Executed `R01_INSUFFICIENT_FUNDS` bounce simulation; verified cash restored to $6,000.00, reserve replenished to $12,000.00, and claim reopened.
+- Verified global ledger balance remained strictly balanced throughout all operations.
+- Verified approval strictly adhered to role rules
