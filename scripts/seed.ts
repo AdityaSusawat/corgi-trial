@@ -34,7 +34,7 @@ async function seed() {
 
     console.log('🏛️ [SEED] Creating Brokers across all statutory KYB states...');
 
-    const brokerRepo = db.getRepository(Broker);
+    const brokerRepo = db.getRepository<Broker>('Broker');
 
     // 1. Approved Broker (Ready to bind business)
     const approvedBroker = brokerRepo.create({
@@ -182,7 +182,7 @@ async function seed() {
     );
 
     console.log('\n🔒 [SEED] Verifying Ledger Double-Entry Balancing Invariant...');
-    const txRepo = db.getRepository(LedgerTransaction);
+    const txRepo = db.getRepository<LedgerTransaction>('LedgerTransaction');
     const transactions = await txRepo.find({ relations: { entries: true } });
 
     let allBalanced = true;

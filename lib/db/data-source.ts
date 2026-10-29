@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { DataSource, EntityManager } from 'typeorm';
 import pg from 'pg';
-import { ALL_ENTITIES } from './entities';
+import { ALL_ENTITIES } from '@/lib/db/entities';
 
 // 1. Parse Postgres BIGINT (OID 20) as safe JS integer (cents) instead of string
 pg.types.setTypeParser(20, (val: string) => parseInt(val, 10));

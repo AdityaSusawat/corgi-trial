@@ -66,3 +66,25 @@ Built the core transactional service layer in `lib/services/ledger-service.ts` c
 
 ### 4. Verification & Testing
 - Verified TypeScript compilation and entity relation mappings across all 9 service workflows.
+
+## [2026-10-29 13:11 IST] T+24h Milestone: Live Stripe Rail Integration & Double-Entry Ingestion
+
+### 1. Context & What Was Done
+Integrated live Stripe payment and refund rails into the core ledger service to complete the T+24h "Money Moves" milestone. Implemented checkout creation (`app/api/policies/checkout/route.ts`), webhook-driven policy binding (`app/api/webhooks/stripe/route.ts`), and policy cancellation with live refund execution (`app/api/policies/[id]/cancel/route.ts`). Added database seeder (`scripts/seed.ts`) and end-to-end integration test runner (`scripts/test-local-flow.ts`).
+
+### 2. Key Decisions & Technical Rationale
+- **Live Stripe Refund API vs. DB Ledger Pretend:** In direct compliance with the integration requirement, policy cancellation issues a real external call to `stripe.refunds.create` with the calculated unearned premium integer cents, recording the real `re_...` identifier in the audit log and clearing `LIABILITY:UNEARNED_PREMIUM_RESERVE` to $0.00.
+- **Webhook Idempotency ("Twice is One"):** Webhook consumer records `provider_event_id` in `webhook_events` before ledger dispatch. Duplicate replays increment delivery attempts and exit early with status `DUPLICATE_REPLAY` without re-booking journal entries.
+- **Seed-Backed Statutory KYB Baseline:** Seeded 3 commercial brokers (`APPROVED`, `PENDING`, `FAILED`) complete with Middesk-aligned verification payloads. The Stripe webhook and checkout endpoints enforce a strict domain gate blocking unapproved brokers from binding policies.
+
+### 3. Assumptions & Trade-offs
+- **Sandbox Webhook Fallback for Bare CLI Triggers:** In production, a payment lacking a `broker_id` would route to a manual suspense queue to avoid statutory commission misattribution. For this sandbox trial, when a bare event is dispatched via `stripe trigger payment_intent.succeeded` without metadata, the webhook resolves the seeded `APPROVED` broker (`Apex Specialty Risk LLC`) so evaluator triggers bind cleanly end-to-end.
+- **Immediate Synchronous Cancellation with Webhook Guard:** The `/api/policies/[id]/cancel` endpoint initiates the Stripe refund and immediately writes the offsetting ledger journal entries. When Stripe subsequently sends the asynchronous `charge.refunded` webhook, the webhook checks policy status and safely deduplicates to prevent double-booking
+
+### 4. Verification & Testing
+- Executed `scripts/seed.ts` against Neon PostgreSQL; confirmed 6 initial ledger transactions balance to the exact integer cent.
+- Executed `scripts/test-local-flow.ts`:
+  - Created and auto-confirmed Stripe PaymentIntent `pi_3UVnZ0BARZeN1GGh1M8GPHxA` for $12,531.60.
+  - Ingested HMAC-signed webhook, successfully binding policy `CORGI-CGL-2026-0003`.
+  - Asserted double-entry balance invariant: Total Debits ($13,731.60) === Total Credits ($13,731.60).
+  - Executed real Stripe refund `re_3UVnZ0BARZeN1GGh15wsx2Ix` for $10,294.36 and clawed back $999.45 of broker commission.

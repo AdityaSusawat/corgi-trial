@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { EntityManager } from 'typeorm';
 import { getDb, withTransaction } from '@/lib/db/data-source';
 import {
@@ -206,7 +207,7 @@ export async function issueAndBindPolicy(
 ): Promise<IssueAndBindPolicyResult> {
     return withTransaction(async (manager) => {
         // 1. Verify Broker exists and passes the KYB Gate!
-        const broker = await manager.findOne(Broker, {
+        const broker = await manager.findOne<Broker>('Broker', {
             where: { id: input.brokerId },
         });
         if (!broker) {
@@ -229,18 +230,18 @@ export async function issueAndBindPolicy(
         });
 
         // 3. Check idempotency if policy was already created with this key
-        const existingTx = await manager.findOne(LedgerTransaction, {
+        const existingTx = await manager.findOne<LedgerTransaction>('LedgerTransaction', {
             where: { idempotency_key: `collect_${input.idempotencyKey}` },
             relations: { entries: true },
         });
         if (existingTx && existingTx.policy_id) {
-            const existingPolicy = await manager.findOneOrFail(Policy, {
+            const existingPolicy = await manager.findOneOrFail<Policy>('Policy', {
                 where: { id: existingTx.policy_id },
             });
-            const existingEvent = await manager.findOneOrFail(PolicyEvent, {
+            const existingEvent = await manager.findOneOrFail<PolicyEvent>('PolicyEvent', {
                 where: { policy_id: existingPolicy.id, sequence_number: 1 },
             });
-            const existingCommTx = await manager.findOne(LedgerTransaction, {
+            const existingCommTx = await manager.findOne<LedgerTransaction>('LedgerTransaction', {
                 where: { idempotency_key: `comm_${input.idempotencyKey}` },
                 relations: { entries: true },
             });
@@ -458,7 +459,7 @@ export async function applyMidTermEndorsement(
 ): Promise<ApplyEndorsementResult> {
     return withTransaction(async (manager) => {
         // 1. Lock Policy row with pessimistic_write to serialize concurrent endorsements
-        const policy = await manager.findOne(Policy, {
+        const policy = await manager.findOne<Policy>('Policy', {
             where: { id: input.policyId },
             lock: { mode: 'pessimistic_write' },
         });
@@ -728,7 +729,7 @@ export async function executeEndorsementCorrection(
     input: CorrectionTestInput
 ): Promise<CorrectionTestResult> {
     return withTransaction(async (manager) => {
-        const policy = await manager.findOne(Policy, {
+        const policy = await manager.findOne<Policy>('Policy', {
             where: { id: input.policyId },
             lock: { mode: 'pessimistic_write' },
         });
@@ -1022,7 +1023,7 @@ export async function cancelPolicyAndRefund(
     input: CancelPolicyInput
 ): Promise<CancelPolicyResult> {
     return withTransaction(async (manager) => {
-        const policy = await manager.findOne(Policy, {
+        const policy = await manager.findOne<Policy>('Policy', {
             where: { id: input.policyId },
             lock: { mode: 'pessimistic_write' },
         });
@@ -1257,7 +1258,7 @@ export async function reconstructPolicyAsOf(params: {
     asOfRecordedTimestamp?: Date;
 }): Promise<ReconstructedPolicyState> {
     const db = await getDb();
-    const policy = await db.manager.findOne(Policy, {
+    const policy = await db.manager.findOne<Policy>('Policy', {
         where: { id: params.policyId },
     });
     if (!policy) {
@@ -1391,7 +1392,7 @@ export async function openClaimWithInitialReserve(
     ledgerTx: LedgerTransaction;
 }> {
     return withTransaction(async (manager) => {
-        const policy = await manager.findOne(Policy, {
+        const policy = await manager.findOne<Policy>('Policy', {
             where: { id: input.policyId },
             lock: { mode: 'pessimistic_write' },
         });
@@ -1521,7 +1522,7 @@ export async function adjustClaimReserve(params: {
             throw new Error(`CLAIM_NOT_FOUND: Claim ${params.claimId} does not exist.`);
         }
 
-        const policy = await manager.findOneOrFail(Policy, {
+        const policy = await manager.findOneOrFail<Policy>('Policy', {
             where: { id: claim.policy_id },
         });
 
@@ -1631,7 +1632,7 @@ export async function initiateOrExecuteClaimPayout(params: {
             throw new Error(`CLAIM_NOT_FOUND: Claim ${params.claimId} does not exist.`);
         }
 
-        const policy = await manager.findOneOrFail(Policy, {
+        const policy = await manager.findOneOrFail<Policy>('Policy', {
             where: { id: claim.policy_id },
         });
 
@@ -1756,7 +1757,7 @@ export async function recordClaimPayoutReturn(params: {
             throw new Error(`CLAIM_NOT_FOUND: Claim ${params.claimId} does not exist.`);
         }
 
-        const policy = await manager.findOneOrFail(Policy, {
+        const policy = await manager.findOneOrFail<Policy>('Policy', {
             where: { id: claim.policy_id },
         });
 
@@ -1955,7 +1956,7 @@ export async function generateOrGetBrokerStatement(params: {
             (tx) => tx.effective_date >= startOfMonth && tx.effective_date <= endOfMonth
         );
 
-        const policies = await manager.find(Policy, {
+        const policies = await manager.find<Policy>('Policy', {
             where: { broker_id: broker.id },
         });
         const policyMap = new Map(policies.map((p) => [p.id, p.policy_number]));
