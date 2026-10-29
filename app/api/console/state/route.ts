@@ -17,13 +17,13 @@ export async function GET() {
     try {
         const db = await getDb();
 
-        const policyRepo = db.getRepository<Policy>('Policy');
-        const brokerRepo = db.getRepository<Broker>('Broker');
-        const txRepo = db.getRepository<LedgerTransaction>('LedgerTransaction');
-        const entryRepo = db.getRepository<LedgerEntry>('LedgerEntry');
-        const claimRepo = db.getRepository<Claim>('Claim');
-        const webhookRepo = db.getRepository<WebhookEvent>('WebhookEvent');
-        const approvalRepo = db.getRepository<ApprovalRequest>('ApprovalRequest');
+        const policyRepo = db.getRepository(Policy);
+        const brokerRepo = db.getRepository(Broker);
+        const txRepo = db.getRepository(LedgerTransaction);
+        const entryRepo = db.getRepository(LedgerEntry);
+        const claimRepo = db.getRepository(Claim);
+        const webhookRepo = db.getRepository(WebhookEvent);
+        const approvalRepo = db.getRepository(ApprovalRequest);
 
         const [brokers, policies, transactions, entries, claims, webhooks, approvals] =
             await Promise.all([
