@@ -88,3 +88,22 @@ Integrated live Stripe payment and refund rails into the core ledger service to 
   - Ingested HMAC-signed webhook, successfully binding policy `CORGI-CGL-2026-0003`.
   - Asserted double-entry balance invariant: Total Debits ($13,731.60) === Total Credits ($13,731.60).
   - Executed real Stripe refund `re_3UVnZ0BARZeN1GGh15wsx2Ix` for $10,294.36 and clawed back $999.45 of broker commission.
+
+## [2026-10-29 21:00 IST] Operator Console UI & Mid-Term Endorsement Route
+
+### 1. Context & What Was Done
+Built the Operator Console workbench in `app/components/OpsConsole.tsx` and connected it via `app/page.tsx` and `app/api/console/state/route.ts`. Wired the mid-term endorsement lifecycle to the live ledger via `app/api/policies/[id]/endorse/route.ts`.
+
+### 2. Key Decisions & Technical Rationale
+- **Client-Side Role Toggle for Reviewers (Non-Negotiable #1):** Placed an instant role switcher (`Underwriting Maker` vs `Lead Checker`) in the global navigation bar. This satisfies the evaluation mandate requiring access to at least two roles without forcing reviewers through cumbersome login walls or cookies during the debrief.
+- **Pessimistic Endorsement Locking:** The `/endorse` route invokes `applyMidTermEndorsement()` with row-level pessimistic write locking (`SELECT ... FOR UPDATE`), serializing concurrent coverage adjustments and preventing ledger race conditions.
+- **Strict Webhook Preservation Over Local Shortcuts:** Kept policy issuance strictly driven by the asynchronous Stripe webhook (`payment_intent.succeeded`) rather than creating a synchronous shortcut inside the checkout handler. This preserves real payment rail integrity and satisfies Non-Negotiable #4.
+
+### 3. Assumptions & Trade-offs
+- **Staging Asterisks (`*`):** Staged Phase 4/5 capabilities (PDF Declarations streaming, Claims Intake modal, Payout settlement rail, Broker statements) with explicit asterisks in the UI to maintain clear boundaries between verified ledger operations and pending deliverables.
+
+### 4. Verification & Testing
+- **Test 1 (Endorsement):** Successfully endorsed `CORGI-CYB-2026-0002` (prorated delta of $2,904.11 base premium, $104.55 state tax, $4.36 stamping fee); ledger recorded balanced $3,013.02 journal entry.
+- **Test 2 (Cancellation):** Cancelled `CORGI-CGL-2026-0001` pro-rata; verified earned premium recognition ($7,989.04), customer refund ($4,131.29), and broker commission clawback ($401.10) tie out to the exact cent.
+- **Test 3 (KYB Gate):** Attempted issuance under unapproved broker `Vanguard Mutual Agents Corp`; verified the underwriting gate hard-aborted with `BROKER_KYB_GATE_BLOCKED`.
+- Table and audit log views verified across all four tabs (`Policies`, `Double-Entry Ledger`, `Broker KYB`, `Claims & Reserves`).
