@@ -160,7 +160,7 @@ export default function OpsConsole() {
   const [isEndorseOpen, setIsEndorseOpen] = useState(false);
   const [isCancelOpen, setIsCancelOpen] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
-  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
+  const [asOfDate, setAsOfDate] = useState('');
 
   // Claims & Maker-Checker Modals
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
@@ -229,6 +229,10 @@ export default function OpsConsole() {
 
   useEffect(() => {
     loadState();
+  }, []);
+
+  useEffect(() => {
+    setAsOfDate(new Date().toISOString().slice(0, 10));
   }, []);
 
   async function handleIssuePolicy(e: React.FormEvent) {
