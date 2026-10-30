@@ -148,6 +148,7 @@ export default function OpsConsole() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
+ 
 
   // MCP Agent Workbench State
   const [mcpToolOutput, setMcpToolOutput] = useState<string | null>(null);
@@ -159,6 +160,7 @@ export default function OpsConsole() {
   const [isEndorseOpen, setIsEndorseOpen] = useState(false);
   const [isCancelOpen, setIsCancelOpen] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<Policy | null>(null);
+  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
 
   // Claims & Maker-Checker Modals
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
@@ -581,6 +583,31 @@ export default function OpsConsole() {
     }
   }
 
+  async function handleBrokerKybUpdate(brokerId: string, status: 'APPROVED' | 'PENDING' | 'FAILED') {
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/brokers/${brokerId}/kyb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'KYB update failed');
+
+      setActionSuccess(
+        `Broker "${payload.broker.legal_name}" KYB status updated to ${status} (Session: ${payload.broker.kyb_provider_session_id}).`
+      );
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#111111] font-sans antialiased">
       {/* Top Navigation */}
@@ -712,6 +739,18 @@ export default function OpsConsole() {
                   Active commercial liability contracts, real-time earned premium slices, and external payment rails.
                 </p>
               </div>
+
+              <div className="flex items-center space-x-2 bg-white border border-gray-200 p-2 rounded-md shadow-sm">
+                <span className="text-xs font-medium text-gray-600">Declarations As-Of Date:</span>
+                <input
+                  type="date"
+                  value={asOfDate}
+                  onChange={(e) => setAsOfDate(e.target.value)}
+                  className="text-xs font-mono border border-gray-300 rounded px-2 py-1 bg-gray-50 text-gray-900 outline-none"
+                  title="Select date for bi-temporal policy reconstruction on Dec Page PDF"
+                />
+              </div>
+
               <button
                 onClick={() => setIsIssueOpen(true)}
                 className="bg-[#FF7D32] hover:bg-[#e66c28] text-white text-sm font-semibold px-4 py-2 rounded-md shadow-sm transition-colors"
@@ -807,17 +846,15 @@ export default function OpsConsole() {
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() =>
-                              alert(
-                                'Declarations PDF Engine (*) will stream bi-temporal document state in Phase 4.'
-                              )
-                            }
-                            className="text-xs text-gray-400 border border-gray-200 px-2 py-1 rounded bg-gray-50"
-                            title="Phase 4 Dynamic PDF Generation"
-                          >
-                            PDF Dec *
-                          </button>
+                          <a
+                         href={`/api/documents/dec-page/${pol.id}?asOfDate=${asOfDate}`}
+                         target="_blank"
+                         rel="noreferrer"
+                         className="px-2.5 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100 text-gray-700 font-medium inline-block"
+                         title={`Download Declarations Page reconstructed as of ${asOfDate}`}
+                       >
+                         Dec Page PDF ↗
+                       </a>
                         </td>
                       </tr>
                     ))}
@@ -978,26 +1015,32 @@ export default function OpsConsole() {
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-gray-100 flex space-x-2">
-                    <button
-                      onClick={() =>
-                        alert(
-                          'KYB Provider Re-check (*) will connect to live verification session in Phase 5.'
-                        )
-                      }
-                      className="text-xs border border-gray-200 bg-gray-50 text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100 w-full"
+                    {broker.kyb_status !== 'APPROVED' ? (
+                      <button
+                        onClick={() => handleBrokerKybUpdate(broker.id, 'APPROVED')}
+                        disabled={isSubmitting}
+                        className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium shadow-sm disabled:opacity-50"
+                      >
+                        Approve KYB
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleBrokerKybUpdate(broker.id, 'FAILED')}
+                        disabled={isSubmitting}
+                        className="px-3 py-1.5 text-xs border border-rose-300 text-rose-700 hover:bg-rose-50 rounded font-medium disabled:opacity-50"
+                      >
+                        Simulate KYB Fail
+                      </button>
+                    )}
+
+                    <a
+                      href={`/api/documents/broker-statement/${broker.id}?month=2026-10`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 text-xs bg-[#111111] hover:bg-black text-white rounded font-medium shadow-sm inline-flex items-center"
                     >
-                      Verify KYB *
-                    </button>
-                    <button
-                      onClick={() =>
-                        alert(
-                          'Commission Statement Generator (*) will render monthly statutory tie-out in Phase 5.'
-                        )
-                      }
-                      className="text-xs border border-gray-200 bg-gray-50 text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100 w-full"
-                    >
-                      Statement *
-                    </button>
+                      Monthly Statement PDF ↗
+                    </a>
                   </div>
                 </div>
               ))}

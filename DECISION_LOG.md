@@ -170,3 +170,17 @@ Built the Model Context Protocol (MCP) server conforming to JSON-RPC 2.0 (`lib/m
 ### 3. Verification & Testing
 - Invoked `get_policy_details`, `get_ledger_trial_balance`, and `get_claim_summary` via `/api/mcp`; confirmed valid JSON-RPC 2.0 payloads.
 - Invoked `propose_claim_payout` for $3,250.00; verified the payout was intercepted, zero cash was moved, and an `[MCP AGENT INITIATED]` approval card appeared in the console queue which could be further approved.
+
+## [2026-10-30 13:00 IST] Dynamic PDF Document Generation & Immutable Broker Statements
+
+### 1. Context & What Was Done
+Implemented a pure TypeScript, zero-dependency PDF 1.4 binary generator (`lib/pdf/pdf-builder.ts`) and exposed dynamic streaming PDF endpoints for Commercial Policy Declarations / Endorsements (`app/api/documents/dec-page/[id]/route.ts`) and Monthly Broker Commission Statements (`app/api/documents/broker-statement/[id]/route.ts`). Added live KYB verification toggle and wired all download buttons directly into `OpsConsole.tsx`.
+
+### 2. Key Decisions & Technical Rationale
+- **Zero-Dependency PDF 1.4 Binary Compiler:** Built a native binary PDF generator using standard Type1 Helvetica and Courier fonts, avoiding native C++ canvas or font-path dependencies so PDF streaming runs reliably on Vercel Serverless Functions.
+- **Bi-Temporal As-Of Contract Reconstruction:** The Declarations PDF endpoint accepts an `?asOfDate=YYYY-MM-DD` query parameter driven by the UI Time Machine scrubber. It filters active policy events up to that date, respects The Correction Test reversals, and computes exact daily pro-rata earned vs. unearned reserves as of any past date.
+- **Accounting Period Lock & Ledger Tie-Out:** Monthly broker statements tie every cent 1:1 against general ledger account `LIABILITY:BROKER_COMMISSION_PAYABLE`. Once a month is closed (`BrokerStatement.is_closed = true`), re-running the endpoint returns the locked immutable snapshot forever, rolling forward any backdated adjustments into open periods.
+
+### 3. Verification & Testing
+- Tested **Dec Page PDF** download verified correct pro-rata earned/unearned calculations and state tax breakdowns.
+- Tested **Monthly Statement PDF** download on Apex Specialty Risk LLC; verified exact ledger tie-out and closed-month lock invariant.
