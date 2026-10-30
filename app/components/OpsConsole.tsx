@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 
 type UserRole = 'MAKER_OPS' | 'CHECKER_LEAD';
-type ConsoleTab = 'policies' | 'ledger' | 'brokers' | 'claims';
+type ConsoleTab = 'policies' | 'ledger' | 'brokers' | 'claims' | 'reconciliation';
 
 interface Broker {
   id: string;
@@ -101,11 +101,27 @@ interface ApprovalRequest {
   claim_id?: string | null;
 }
 
+interface ReconciliationBreak {
+  id: string;
+  reconciliation_run_id: string;
+  source_rail: 'STRIPE_PAYMENTS' | 'CLAIM_PAYOUT_RAIL';
+  external_reference_id: string;
+  break_type: 'AMOUNT_MISMATCH' | 'MISSING_IN_LEDGER' | 'MISSING_AT_PROVIDER' | 'UNEXPECTED_RETURN_STATE';
+  provider_amount_cents: number | null;
+  ledger_amount_cents: number | null;
+  variance_cents: number;
+  explanation: string;
+  status: 'OPEN_BREAK' | 'RESOLVED_BY_JOURNAL' | 'IGNORED';
+  is_planted_test_break: boolean;
+  detected_at: string;
+}
+
 interface ConsoleState {
   brokers: Broker[];
   policies: Policy[];
   claims: Claim[];
   approvals: ApprovalRequest[];
+  reconciliationBreaks?: ReconciliationBreak[];
   ledger: {
     transactions: LedgerTransaction[];
     trialBalances: TrialBalance[];
@@ -130,6 +146,7 @@ export default function OpsConsole() {
   const [loading, setLoading] = useState<boolean>(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
 
   // Modal States
   const [isIssueOpen, setIsIssueOpen] = useState(false);
@@ -444,6 +461,76 @@ export default function OpsConsole() {
     }
   }
 
+  async function handleRunReconciliation() {
+    setIsReconciling(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch('/api/reconciliation/run', { method: 'POST' });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Reconciliation run failed');
+
+      setActionSuccess(
+        `Reconciliation complete (${payload.runId}): ${payload.matchedCount} transactions matched cleanly. ` +
+        `Active open breaks: ${payload.breaksDetectedCount}.`
+      );
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsReconciling(false);
+    }
+  }
+
+  async function handlePlantTestBreak(
+  scenario: 'MISMATCHED_CLAIM_PAYOUT' | 'UNBOOKED_STRIPE_CHARGE' | 'UNHANDLED_ACH_RETURN'
+) {
+  setIsSubmitting(true);
+  setActionError(null);
+  setActionSuccess(null);
+
+  try {
+    const res = await fetch('/api/reconciliation/plant-break', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario }),
+    });
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || 'Failed to plant test break');
+
+    setActionSuccess(payload.message);
+    loadState();
+  } catch (err: unknown) {
+    setActionError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setIsSubmitting(false);
+  }
+}
+
+  async function handleResolveBreak(breakId: string) {
+    setIsSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch('/api/reconciliation/plant-break', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ breakId }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to resolve break');
+
+      setActionSuccess(`Break ${breakId.slice(0, 8)} marked as RESOLVED_BY_JOURNAL.`);
+      loadState();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#111111] font-sans antialiased">
       {/* Top Navigation */}
@@ -465,6 +552,7 @@ export default function OpsConsole() {
                   ['ledger', 'Double-Entry Ledger'],
                   ['brokers', 'Broker KYB'],
                   ['claims', 'Claims & Reserves'],
+                  ['reconciliation', 'Reconciliation'],
                 ] as const
               ).map(([tabKey, label]) => (
                 <button
@@ -1004,6 +1092,156 @@ export default function OpsConsole() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: RECONCILIATION & BREAKS (NON-NEGOTIABLE #7) */}
+        {activeTab === 'reconciliation' && (
+          <div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-[#111111]">
+                  Reconciliation & Exception Engine
+                </h1>
+                <p className="text-sm text-gray-500">
+                  Two-way diff between External Provider Truth (Stripe API & ACH Bank Clearing Feed) and Internal General Ledger.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {/* Debrief Live-Fire Break Generator */}
+                <select
+               onChange={(e) => {
+                 if (e.target.value) {
+                   handlePlantTestBreak(e.target.value as any);
+                   e.target.value = '';
+                 }
+               }}
+               defaultValue=""
+               className="text-xs border border-gray-300 rounded px-2.5 py-2 bg-white text-gray-700 outline-none"
+             >
+               <option value="" disabled>+ Plant Real Source Discrepancy (Debrief) *</option>
+               <option value="MISMATCHED_CLAIM_PAYOUT">Mismatched Claim Payout ($2,500 Ledger vs $2,485 Bank)</option>
+               <option value="UNBOOKED_STRIPE_CHARGE">Live Stripe Charge Missing in Ledger ($8,450.00)</option>
+               <option value="UNHANDLED_ACH_RETURN">Unhandled R03 ACH Bounce ($4,200.00)</option>
+             </select>
+
+                <button
+                  onClick={handleRunReconciliation}
+                  disabled={isReconciling}
+                  className="bg-[#FF7D32] hover:bg-[#e66c28] text-white text-sm font-semibold px-4 py-2 rounded-md shadow-sm transition-colors disabled:opacity-50"
+                >
+                  {isReconciling ? 'Running Diff Engine...' : 'Run Reconciliation'}
+                </button>
+              </div>
+            </div>
+
+            {/* Reconciliation Health Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white border border-gray-200 p-4 rounded-md shadow-sm">
+                <div className="text-xs text-gray-500 font-medium">External Provider Truth</div>
+                <div className="text-sm font-bold text-gray-900 mt-1">Stripe API + ACH Feed</div>
+                <div className="text-xs text-emerald-600 mt-1">Direct API & Clearing Log</div>
+              </div>
+
+              <div className="bg-white border border-gray-200 p-4 rounded-md shadow-sm">
+                <div className="text-xs text-gray-500 font-medium">Internal Ledger Account</div>
+                <div className="text-xs font-mono font-bold text-gray-900 mt-1 truncate">ASSET:OPERATING_CASH_SETTLED</div>
+                <div className="text-xs text-gray-500 mt-1">Postgres Immutable Log</div>
+              </div>
+
+              <div className="bg-white border border-gray-200 p-4 rounded-md shadow-sm">
+                <div className="text-xs text-gray-500 font-medium">Open Reconciliation Breaks</div>
+                <div className={`text-xl font-bold font-mono mt-1 ${
+                  (data?.reconciliationBreaks?.filter(b => b.status === 'OPEN_BREAK').length || 0) > 0
+                    ? 'text-rose-600'
+                    : 'text-emerald-600'
+                }`}>
+                  {data?.reconciliationBreaks?.filter(b => b.status === 'OPEN_BREAK').length || 0}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">Exceptions requiring tie-out</div>
+              </div>
+
+              <div className="bg-white border border-gray-200 p-4 rounded-md shadow-sm">
+                <div className="text-xs text-gray-500 font-medium">Reconciliation Invariant</div>
+                <div className="text-sm font-bold text-gray-900 mt-1">
+                  {(data?.reconciliationBreaks?.filter(b => b.status === 'OPEN_BREAK').length || 0) === 0
+                    ? '100% In-Balance'
+                    : 'Discrepancy Detected'}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">Debrief live-fire ready</div>
+              </div>
+            </div>
+
+            {/* Reconciliation Breaks Table */}
+            <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 font-semibold text-sm text-[#111111] flex justify-between items-center">
+                <span>Detected Ledger & Provider Discrepancies</span>
+                <span className="text-xs font-normal text-gray-500 font-mono">Table: reconciliation_breaks</span>
+              </div>
+
+              {(!data?.reconciliationBreaks || data.reconciliationBreaks.length === 0) ? (
+                <div className="p-12 text-center text-sm text-gray-500">
+                  No breaks detected. Click <strong>"Run Reconciliation"</strong> to diff live Stripe transactions and ACH clearing feeds against the general ledger.
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {data.reconciliationBreaks.map((brk) => (
+                    <div key={brk.id} className="p-4 hover:bg-gray-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                            brk.status === 'OPEN_BREAK'
+                              ? 'bg-rose-50 text-rose-800 border border-rose-200'
+                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          }`}>
+                            {brk.break_type}
+                          </span>
+                          <span className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                            {brk.source_rail}
+                          </span>
+                          {brk.is_planted_test_break && (
+                            <span className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.2 rounded font-medium">
+                              Live-Fire Test Break
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-400">
+                            {new Date(brk.detected_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+
+                        <div className="text-sm font-medium text-gray-900">
+                          {brk.explanation}
+                        </div>
+
+                        <div className="text-xs font-mono text-gray-500 flex gap-4">
+                          <span>Ref: {brk.external_reference_id}</span>
+                          <span>Provider: {brk.provider_amount_cents !== null ? formatCents(brk.provider_amount_cents) : 'N/A'}</span>
+                          <span>Ledger: {brk.ledger_amount_cents !== null ? formatCents(brk.ledger_amount_cents) : 'N/A'}</span>
+                          <span className="font-semibold text-rose-700">Variance: {formatCents(Math.abs(brk.variance_cents))}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        {brk.status === 'OPEN_BREAK' ? (
+                          <button
+                            onClick={() => handleResolveBreak(brk.id)}
+                            disabled={isSubmitting}
+                            className="px-3 py-1.5 text-xs bg-white border border-gray-300 hover:border-gray-400 text-gray-700 font-medium rounded shadow-sm disabled:opacity-50"
+                          >
+                            Mark Resolved
+                          </button>
+                        ) : (
+                          <span className="text-xs text-emerald-700 font-semibold px-2 py-1 bg-emerald-50 rounded">
+                            RESOLVED
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

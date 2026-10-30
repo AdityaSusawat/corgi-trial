@@ -130,3 +130,25 @@ Implemented the Claims Intake, Reserving, Dual-Control Payout, and Asynchronous 
 - **Test 3 (ACH Return):** Executed `R01_INSUFFICIENT_FUNDS` bounce simulation; verified cash restored to $6,000.00, reserve replenished to $12,000.00, and claim reopened.
 - Verified global ledger balance remained strictly balanced throughout all operations.
 - Verified approval strictly adhered to role rules
+
+## [2026-10-30 04:30 IST] Reconciliation Engine & Live-Fire Discrepancy Injection
+
+### 1. Context & What Was Done
+Built the two-way reconciliation diff engine in `lib/services/reconciliation-service.ts`, exposing REST endpoints (`/api/reconciliation/run`, `/api/reconciliation/plant-break`) and integrating the Reconciliation & Breaks view into `OpsConsole.tsx`. Implemented authentic, 100% append-only discrepancy injection workflows for live debrief testing.
+
+### 2. Key Decisions & Technical Rationale
+- **Two-Way Diff Engine (Non-Negotiable #7):** Continuously reconciles External Provider Truth (live Stripe PaymentIntents/Refunds API and simulated ACH Bank Clearing Feed stored in `claim_reserve_events`) against Internal General Ledger cash transactions (`ASSET:OPERATING_CASH_SETTLED`).
+- **Append-Only Discrepancy Injection:** To avoid bypassing immutable database triggers with illegal `UPDATE` statements, test exceptions are planted via real source-level insertions:
+  - *Mismatched Payout:* Appends a gross payout in the ledger while clearing a net amount (net of wire fees) in the bank clearing feed, producing an exact `AMOUNT_MISMATCH`.
+  - *Unhandled ACH Return:* Appends an `R03_NO_ACCOUNT` return event to the bank clearing feed without posting the compensating ledger reversal, producing an `UNEXPECTED_RETURN_STATE`.
+  - *Unbooked Stripe Charge:* Creates a real live test-mode charge on Stripe with a webhook guard that skips ledger ingestion, producing a `MISSING_IN_LEDGER` break.
+- **Resolution Persistence & Inception Windowing:** Resolved breaks (`RESOLVED_BY_JOURNAL`) are preserved across reconciliation runs by `external_reference_id`, and provider queries are bounded to the database inception timestamp to prevent historical orphan charges from cluttering trial runs.
+
+### 3. Assumptions & Trade-offs
+- **Detective Control Design:** Reconciliation is strictly a detective and audit control. It surfaces variances as formal `ReconciliationBreak` records rather than auto-mutating journal entries, preserving carrier audit trails.
+
+### 4. Verification & Testing
+- **Test 1 (Clean Run):** Verified 100% in-balance baseline with 0 open breaks.
+- **Test 2 (Mismatched Payout):** Planted a $15.00 wire fee variance; reconciliation run caught and flagged it as an `AMOUNT_MISMATCH`.
+- **Test 3 (Unbooked Stripe Charge):** Planted an unbooked $8,450.00 Stripe charge; reconciliation run queried Stripe API live and flagged it as `MISSING_IN_LEDGER`.
+- **Test 4 (R03 ACH Bounce):** Planted an uningested R03 return; reconciliation run flagged it as an `UNEXPECTED_RETURN_STATE`.

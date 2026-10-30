@@ -77,7 +77,16 @@ export async function POST(req: NextRequest) {
         switch (event.type) {
             case 'payment_intent.succeeded': {
                 const pi = event.data.object as Stripe.PaymentIntent;
+
                 const meta = pi.metadata ?? {};
+
+                // Live-Fire Reconciliation Test Guard:
+                // Skips ledger ingestion when planting an unbooked Stripe charge
+                if (meta.skip_webhook_ledger === 'true') {
+                    record.processing_status = 'PROCESSED';
+                    await webhookRepo.save(record);
+                    return NextResponse.json({ received: true, skippedForReconTest: true });
+                }
                 const actionType = meta.corgi_action ?? 'POLICY_ISSUANCE';
 
                 const latestChargeId =

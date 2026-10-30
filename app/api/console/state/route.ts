@@ -8,6 +8,7 @@ import {
     LedgerEntry,
     LedgerTransaction,
     Policy,
+    ReconciliationBreak,
     WebhookEvent,
 } from '@/lib/db/entities';
 
@@ -24,8 +25,9 @@ export async function GET() {
         const claimRepo = db.getRepository(Claim);
         const webhookRepo = db.getRepository(WebhookEvent);
         const approvalRepo = db.getRepository(ApprovalRequest);
+        const breakRepo = db.getRepository(ReconciliationBreak);
 
-        const [brokers, policies, transactions, entries, claims, webhooks, approvals] =
+        const [brokers, policies, transactions, entries, claims, webhooks, approvals, reconciliationBreaks] =
             await Promise.all([
                 brokerRepo.find({ order: { created_at: 'ASC' } }),
                 policyRepo.find({
@@ -48,6 +50,9 @@ export async function GET() {
                 }),
                 approvalRepo.find({
                     order: { created_at: 'DESC' },
+                }),
+                breakRepo.find({
+                    order: { detected_at: 'DESC' },
                 }),
             ]);
 
@@ -92,6 +97,7 @@ export async function GET() {
             claims,
             webhooks,
             approvals,
+            reconciliationBreaks,
             ledger: {
                 transactions,
                 trialBalances,
