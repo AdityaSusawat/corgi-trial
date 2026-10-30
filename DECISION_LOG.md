@@ -152,3 +152,21 @@ Built the two-way reconciliation diff engine in `lib/services/reconciliation-ser
 - **Test 2 (Mismatched Payout):** Planted a $15.00 wire fee variance; reconciliation run caught and flagged it as an `AMOUNT_MISMATCH`.
 - **Test 3 (Unbooked Stripe Charge):** Planted an unbooked $8,450.00 Stripe charge; reconciliation run queried Stripe API live and flagged it as `MISSING_IN_LEDGER`.
 - **Test 4 (R03 ACH Bounce):** Planted an uningested R03 return; reconciliation run flagged it as an `UNEXPECTED_RETURN_STATE`.
+
+## [2026-10-30 11:30 IST] MCP Agent Surface & Autonomous Gated Writes
+
+### 1. Context & What Was Done
+Built the Model Context Protocol (MCP) server conforming to JSON-RPC 2.0 (`lib/mcp/tools.ts`, `app/api/mcp/route.ts`, and `scripts/mcp-stdio.ts`) per Non-Negotiable #8. Added the interactive MCP Agent Workbench and agent-approval tagging into `OpsConsole.tsx`.
+
+### 2. Key Decisions & Technical Rationale
+- **Dual Transport Architecture:** Exposed standard JSON-RPC 2.0 over both HTTP (`/api/mcp` on live Vercel deployment) and stdio (`scripts/mcp-stdio.ts`) for direct compatibility with Claude Desktop / Cursor MCP inspectors without bundling weight or serverless compatibility issues.
+- **Tools Surface (3 Read + 1 Gated Write):**
+  - `get_policy_details` (Read): Returns coverage schedule, term dates, statutory tax breakdown, and immutable event history.
+  - `get_ledger_trial_balance` (Read): Computes real-time trial balance and verifies the global debit === credit invariant.
+  - `get_claim_summary` (Read): Inspects loss reserve, settled disbursements, and remaining limit headroom ($Incurred = Paid + Reserve \le Limit$).
+  - `propose_claim_payout` (Gated Write): Allows an autonomous AI agent to propose a claim disbursement based on invoice triage. Must be approved.
+- **Non-Negotiable Autonomous Guardrail:** Autonomous agents are strictly forbidden from executing money movements or self-approving. `propose_claim_payout` automatically tags `initiated_by_role: 'MCP_AGENT'`, `is_agent_initiated: true`, and forces `status: 'PENDING'` in the `approval_requests` queue, requiring a human `CHECKER_LEAD` to review and execute.
+
+### 3. Verification & Testing
+- Invoked `get_policy_details`, `get_ledger_trial_balance`, and `get_claim_summary` via `/api/mcp`; confirmed valid JSON-RPC 2.0 payloads.
+- Invoked `propose_claim_payout` for $3,250.00; verified the payout was intercepted, zero cash was moved, and an `[MCP AGENT INITIATED]` approval card appeared in the console queue which could be further approved.

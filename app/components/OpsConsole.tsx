@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 
 type UserRole = 'MAKER_OPS' | 'CHECKER_LEAD';
-type ConsoleTab = 'policies' | 'ledger' | 'brokers' | 'claims' | 'reconciliation';
+type ConsoleTab = 'policies' | 'ledger' | 'brokers' | 'claims' | 'reconciliation'| 'mcp';
 
 interface Broker {
   id: string;
@@ -97,6 +97,7 @@ interface ApprovalRequest {
   summary: string;
   initiated_by_user: string;
   initiated_by_role: string;
+  is_agent_initiated?: boolean;
   created_at: string;
   claim_id?: string | null;
 }
@@ -148,6 +149,11 @@ export default function OpsConsole() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
 
+  // MCP Agent Workbench State
+  const [mcpToolOutput, setMcpToolOutput] = useState<string | null>(null);
+  const [mcpActiveTool, setMcpActiveTool] = useState<string | null>(null);
+  const [mcpPayoutCents, setMcpPayoutCents] = useState(325000); // $3,250.00
+  
   // Modal States
   const [isIssueOpen, setIsIssueOpen] = useState(false);
   const [isEndorseOpen, setIsEndorseOpen] = useState(false);
@@ -531,6 +537,50 @@ export default function OpsConsole() {
     }
   }
 
+  async function handleInvokeMcpTool(toolName: string, args: Record<string, unknown>) {
+    setIsSubmitting(true);
+    setMcpActiveTool(toolName);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch('/api/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'tools/call',
+          params: {
+            name: toolName,
+            arguments: args,
+          },
+        }),
+      });
+
+      const payload = await res.json();
+      if (payload.error) {
+        throw new Error(payload.error.message || 'MCP RPC invocation failed');
+      }
+
+      const textResult = payload.result?.content?.[0]?.text || JSON.stringify(payload.result, null, 2);
+      setMcpToolOutput(textResult);
+
+      if (toolName === 'propose_claim_payout') {
+        setActionSuccess(
+          `MCP Agent invoked "propose_claim_payout": Intercepted and queued in Maker-Checker Approvals (is_agent_initiated = true). Switch to Claims & Reserves as Lead Checker to review!`
+        );
+        loadState();
+      } else {
+        setActionSuccess(`MCP Read Tool "${toolName}" executed via JSON-RPC 2.0.`);
+      }
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#111111] font-sans antialiased">
       {/* Top Navigation */}
@@ -553,6 +603,7 @@ export default function OpsConsole() {
                   ['brokers', 'Broker KYB'],
                   ['claims', 'Claims & Reserves'],
                   ['reconciliation', 'Reconciliation'],
+                  ['mcp', 'MCP Agent'],
                 ] as const
               ).map(([tabKey, label]) => (
                 <button
@@ -994,6 +1045,11 @@ export default function OpsConsole() {
                     <div key={req.id} className="bg-white border border-amber-200 rounded p-3 flex justify-between items-center text-sm">
                       <div>
                         <div className="font-semibold text-gray-900">{req.summary}</div>
+                        {(req.is_agent_initiated || req.initiated_by_role === 'MCP_AGENT') && (
+                            <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-purple-100 text-purple-800 border border-purple-300 rounded">
+                              MCP Agent Initiated
+                            </span>
+                          )}
                         <div className="text-xs text-gray-500 font-mono">
                           Initiated by: {req.initiated_by_user} ({req.initiated_by_role}) | Amount: {formatCents(req.amount_cents)}
                         </div>
@@ -1245,6 +1301,150 @@ export default function OpsConsole() {
             </div>
           </div>
         )}
+
+        {/* TAB 6: MCP AGENT SURFACE (NON-NEGOTIABLE #8) */}
+        {activeTab === 'mcp' && (
+          <div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-[#111111]">
+                  Model Context Protocol (MCP) Agent Surface
+                </h1>
+                <p className="text-sm text-gray-500">
+                  Live JSON-RPC 2.0 MCP Server (<code className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">POST /api/mcp</code>) exposing 3 Read Tools and 1 Maker-Checker Gated Write Tool.
+                </p>
+              </div>
+              <a
+                href="/api/mcp"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-mono border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 px-3 py-2 rounded shadow-sm"
+              >
+                View Live MCP Manifest (/api/mcp) ↗
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Tool Invocation Cards */}
+              <div className="space-y-4">
+                <div className="bg-white border border-gray-200 rounded-md p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-bold text-[#111111]">1. get_policy_details</span>
+                    <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-semibold">READ TOOL</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Queries policy terms, limits, deductible, broker KYB status, and immutable endorsement slices.
+                  </p>
+                  <button
+                    onClick={() =>
+                      handleInvokeMcpTool('get_policy_details', {
+                        policyIdentifier: data?.policies?.[0]?.policy_number || 'CORGI-CGL-2026-0001',
+                      })
+                    }
+                    disabled={isSubmitting}
+                    className="text-xs bg-[#111111] hover:bg-black text-white font-semibold px-3 py-1.5 rounded disabled:opacity-50"
+                  >
+                    Invoke via MCP JSON-RPC ({data?.policies?.[0]?.policy_number || 'Latest Policy'})
+                  </button>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-md p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-bold text-[#111111]">2. get_ledger_trial_balance</span>
+                    <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-semibold">READ TOOL</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Retrieves real-time double-entry account balances and verifies the global Debit === Credit invariant.
+                  </p>
+                  <button
+                    onClick={() =>
+                      handleInvokeMcpTool('get_ledger_trial_balance', {
+                        includeRecentTransactionsLimit: 5,
+                      })
+                    }
+                    disabled={isSubmitting}
+                    className="text-xs bg-[#111111] hover:bg-black text-white font-semibold px-3 py-1.5 rounded disabled:opacity-50"
+                  >
+                    Invoke via MCP JSON-RPC
+                  </button>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-md p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-bold text-[#111111]">3. get_claim_summary</span>
+                    <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-semibold">READ TOOL</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Inspects claim loss reserve, settled disbursements, and remaining policy limit solvency headroom.
+                  </p>
+                  <button
+                    onClick={() =>
+                      handleInvokeMcpTool('get_claim_summary', {
+                        claimIdentifier: data?.claims?.[0]?.claim_number || 'CLM-2026-0001',
+                      })
+                    }
+                    disabled={isSubmitting}
+                    className="text-xs bg-[#111111] hover:bg-black text-white font-semibold px-3 py-1.5 rounded disabled:opacity-50"
+                  >
+                    Invoke via MCP JSON-RPC ({data?.claims?.[0]?.claim_number || 'Latest Claim'})
+                  </button>
+                </div>
+
+                <div className="bg-purple-50/60 border border-purple-200 rounded-md p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-bold text-purple-950">4. propose_claim_payout</span>
+                    <span className="text-xs bg-purple-100 text-purple-800 border border-purple-300 px-2 py-0.5 rounded font-semibold">
+                      WRITE TOOL (MAKER-CHECKER GATED)
+                    </span>
+                  </div>
+                  <p className="text-xs text-purple-900 mb-3">
+                    Autonomous agent proposes a claim payout. Hard-gated by Non-Negotiable #6 & #8: lands in <code className="font-mono">approval_requests</code> (<code className="font-mono">is_agent_initiated = true</code>) and cannot self-approve.
+                  </p>
+                  <div className="flex items-center space-x-2 mb-3">
+                    <input
+                      type="number"
+                      step="5000"
+                      value={mcpPayoutCents}
+                      onChange={(e) => setMcpPayoutCents(Number(e.target.value))}
+                      className="w-36 text-xs font-mono border border-purple-300 bg-white rounded px-2.5 py-1.5"
+                    />
+                    <span className="text-xs font-mono text-purple-900 font-semibold">
+                      ({formatCents(mcpPayoutCents)})
+                    </span>
+                  </div>
+                  <button
+                    onClick={() =>
+                      handleInvokeMcpTool('propose_claim_payout', {
+                        claimIdentifier: data?.claims?.[0]?.claim_number || 'CLM-2026-0001',
+                        payoutAmountCents: mcpPayoutCents,
+                        payoutRail: 'ACH_DELAYED',
+                        reasoningNotes:
+                          'Autonomous agent verified repair invoice and coverage schedule; proposing disbursement for Lead Checker sign-off.',
+                      })
+                    }
+                    disabled={isSubmitting}
+                    className="text-xs bg-[#FF7D32] hover:bg-[#e66c28] text-white font-semibold px-3 py-1.5 rounded shadow-sm disabled:opacity-50"
+                  >
+                    Agent: Propose Payout into Approval Queue
+                  </button>
+                </div>
+              </div>
+
+              {/* Live JSON-RPC Output Inspector */}
+              <div className="bg-[#111111] text-gray-100 rounded-md p-4 font-mono text-xs overflow-auto max-h-[560px] border border-gray-800">
+                <div className="flex justify-between items-center pb-2 mb-3 border-b border-gray-800 text-gray-400">
+                  <span>MCP JSON-RPC 2.0 Response Inspector</span>
+                  {mcpActiveTool && <span className="text-[#FF7D32]">Tool: {mcpActiveTool}</span>}
+                </div>
+                <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                  {mcpToolOutput ||
+                    '// Click any MCP tool on the left to execute a live JSON-RPC 2.0 "tools/call" request against /api/mcp...'}
+                </pre>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* MODAL 1: ISSUE POLICY */}
