@@ -184,3 +184,8 @@ Implemented a pure TypeScript, zero-dependency PDF 1.4 binary generator (`lib/pd
 ### 3. Verification & Testing
 - Tested **Dec Page PDF** download verified correct pro-rata earned/unearned calculations and state tax breakdowns.
 - Tested **Monthly Statement PDF** download on Apex Specialty Risk LLC; verified exact ledger tie-out and closed-month lock invariant.
+
+## [OUT OF TIME LIMIT] Fixed a minor TS error that messed up deployment
+
+### Context and what was done
+Even thoough the commits for PDF generator and asOf were made within the time limit of the work trial (verifiable through github), they were not properly pushed to github and hence deployment failed due to a minor TS value mismatch. This commit ONLY contains the fix for TS.

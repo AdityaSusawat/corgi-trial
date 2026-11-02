@@ -97,7 +97,11 @@ export async function GET(
 
         // Calculate Earned vs Unearned Premium as of `asOfDate` (Gauntlets #1, #2, #3)
         const activeEarningSlices: PolicyFinancialSlice[] = eventsUpToDate
-            .filter((e) => e.event_type !== 'POLICY_CANCELLED')
+            .filter(
+                (e): e is PolicyEvent & { event_type: PolicyFinancialSlice['eventType'] } =>
+                    e.event_type !== 'POLICY_CANCELLED' &&
+                    e.event_type !== 'POLICY_REINSTATED'
+            )
             .map((e) => ({
                 eventId: e.id,
                 eventType: e.event_type,
@@ -154,10 +158,10 @@ export async function GET(
             },
             {
                 text: `Producer / Broker:  ${broker
-                        ? `${broker.legal_name} (KYB: ${broker.kyb_status} | Comm: ${(
-                            broker.commission_rate_bps / 100
-                        ).toFixed(2)}%)`
-                        : 'Direct'
+                    ? `${broker.legal_name} (KYB: ${broker.kyb_status} | Comm: ${(
+                        broker.commission_rate_bps / 100
+                    ).toFixed(2)}%)`
+                    : 'Direct'
                     }`,
                 font: 'MONO',
                 size: 9,

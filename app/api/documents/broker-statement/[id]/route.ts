@@ -88,8 +88,8 @@ export async function GET(
                 for (const entry of tx.entries) {
                     if (entry.account_code === LedgerAccount.UNEARNED_PREMIUM_RESERVE) {
                         if (
-                            tx.event_category === 'PREMIUM_COLLECTION' ||
-                            tx.event_category === 'ENDORSEMENT_CHARGE'
+                            tx.event_category === 'ISSUANCE' ||
+                            tx.event_category === 'ENDORSEMENT'
                         ) {
                             grossPremiumCollectedCents += entry.amount_cents;
                             if (tx.policy_id) {
